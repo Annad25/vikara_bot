@@ -4,3 +4,4 @@ groq
 google-auth
 google-api-python-client
 python-dotenv
+gTTS
