@@ -66,24 +66,43 @@ def transcribe_audio(audio_bytes):
         return None
 
 def extract_slots(text, current_state):
-    """Uses Groq Llama3 to extract JSON slots"""
+    # 1. prompt
     sys_prompt = f"""
-    You are a scheduling assistant. Current state: {current_state}
-    Extract these fields from the user input: name, date (YYYY-MM-DD), time (HH:MM), title.
-    If the user confirms the details, set "confirmed" to true.
-    Return ONLY valid JSON. Keep existing values if not changed.
-    Today is {datetime.now().strftime('%Y-%m-%d')}.
+    You are a scheduling assistant. 
+    Current state: {current_state}
+    
+    INSTRUCTIONS:
+    1. Extract fields: name, date (YYYY-MM-DD), time (HH:MM), title.
+    2. If the user confirms, set "confirmed" to true.
+    3. Today is {datetime.now().strftime('%Y-%m-%d')}.
+    
+    OUTPUT FORMAT:
+    You must return ONLY a raw JSON object. Do not add markdown formatting like ```json.
+    Do not add any conversational text. Just the JSON.
     """
     
-    completion = client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": text}
-        ],
-        model="llama3-8b-8192",
-        response_format={"type": "json_object"}
-    )
-    return json.loads(completion.choices[0].message.content)
+    try:
+        completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": f"User said: '{text}'. Update the state JSON."}
+            ],
+            model="llama-3.3-70b-versatile", 
+            temperature=0
+        )
+        
+        # 3. Manual Cleanup 
+        content = completion.choices[0].message.content
+        
+        # strip ```json 
+        content = content.replace("```json", "").replace("```", "").strip()
+        
+        return json.loads(content)
+        
+    except Exception as e:
+        st.error(f"Extraction Error: {e}")
+        # Return empty dict
+        return {}
 
 # --- STREAMLIT UI ---
 st.title("🎙️ Voice Scheduling Agent")
