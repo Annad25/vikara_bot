@@ -30,8 +30,8 @@ def create_calendar_event(summary, start_time_str, duration_mins=30):
 
         event = {
             'summary': summary,
-            'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'UTC'},
-            'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'UTC'},
+            'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'Asia/Kolkata'},
+            'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Kolkata'},
         }
 
         # CALENDAR_ID
