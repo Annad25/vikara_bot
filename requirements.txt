@@ -1,0 +1,6 @@
+streamlit
+streamlit-webrtc
+groq
+google-auth
+google-api-python-client
+python-dotenv
