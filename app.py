@@ -1,6 +1,6 @@
 import streamlit as st
 import json
-from datetime import datetime
+from datetime import datetime, timedelta  
 from groq import Groq
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -14,7 +14,7 @@ else:
     st.error("GROQ_API_KEY is missing in secrets.")
     st.stop()
 
-CALENDAR_ID = 'parnadebnath60669@gmail.com' # Your Email
+CALENDAR_ID = 'parnadebnath60669@gmail.com' 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 # --- GOOGLE CALENDAR FUNCTION ---
@@ -30,25 +30,28 @@ def create_calendar_event(summary, start_time_str, duration_mins=30):
 
         # 1. Parse Time
         start_dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M")
-        end_dt = start_dt.replace(minute=start_dt.minute + duration_mins)
+        
+        # 2. Calculate End Time
+        end_dt = start_dt + timedelta(minutes=duration_mins)
 
-        # 2. CHECK FOR CONFLICTS (The New Logic)
-        # We query for events that start exactly at the same time or overlap
+        # 3. CHECK FOR CONFLICTS 
+        time_min_str = start_dt.isoformat() + '+05:30'
+        time_max_str = end_dt.isoformat() + '+05:30'
+
         events_result = service.events().list(
             calendarId=CALENDAR_ID,
-            timeMin=start_dt.isoformat() + 'Z', # Adding Z to indicate UTC/ISO format strictness
-            timeMax=end_dt.isoformat() + 'Z',
+            timeMin=time_min_str,
+            timeMax=time_max_str,
             singleEvents=True,
             orderBy='startTime'
         ).execute()
         
         existing_events = events_result.get('items', [])
         
-        # If we found an event in this slot, STOP and return error
         if existing_events:
             return False, "That time slot is already booked. Please choose a different time."
 
-        # 3. If slot is free, proceed to book
+        # 4. If free, book the event
         description = (
             f"Booked by AI Agent.\n"
             f"Meeting: {summary}\n"
@@ -68,11 +71,10 @@ def create_calendar_event(summary, start_time_str, duration_mins=30):
     except Exception as e:
         return False, str(e)
 
-# --- AI ENGINE ---
+# --- AI (Groq) ---
 client = Groq(api_key=GROQ_API_KEY)
 
 def text_to_speech_bytes(text):
-    """Generates audio bytes from text using free gTTS"""
     try:
         tts = gTTS(text=text, lang='en')
         audio_fp = io.BytesIO()
@@ -97,12 +99,6 @@ def transcribe_audio(audio_bytes):
         return None
 
 def process_conversation(user_input, current_state):
-    """
-    This is the Brain. It takes history + new input and returns:
-    1. Updated State
-    2. A Natural Language Response
-    """
-    
     current_date = datetime.now().strftime('%Y-%m-%d %A')
     
     sys_prompt = f"""
@@ -145,7 +141,6 @@ def process_conversation(user_input, current_state):
         return json.loads(content)
     except Exception as e:
         st.error(f"LLM Error: {e}")
-        # Return old state with error message
         current_state['reply_text'] = "Sorry, I had a brain freeze. Could you say that again?"
         return current_state
 
@@ -167,7 +162,6 @@ if "last_audio_id" not in st.session_state:
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
-       
         if "audio" in msg:
             st.audio(msg["audio"], format="audio/mp3", autoplay=False)
 
@@ -177,7 +171,6 @@ processed_input = None
 
 with input_container:
     # 1. Voice Input with DYNAMIC KEY
-    
     audio_val = st.audio_input("Speak to Agent", key=f"audio_{st.session_state.audio_key}")
     
     # 2. Text Input
@@ -193,20 +186,14 @@ with input_container:
 
 # --- LOGIC FLOW ---
 if processed_input:
-    # 1. Append User Message
     st.session_state.messages.append({"role": "user", "content": processed_input})
     
-    # 2. Process with LLM (The Brain)
     with st.spinner("Thinking..."):
-        # We pass the OLD slots so the LLM can remember history
         new_state = process_conversation(processed_input, st.session_state.slots)
-        
-        # Update session state with the new merged state
         st.session_state.slots.update(new_state)
         
         reply_text = new_state.get("reply_text", "I'm not sure what to say.")
         
-        # 3. Check for Confirmation to Book
         if new_state.get("confirmed"):
             success, link = create_calendar_event(
                 f"{new_state['title']} with {new_state['name']}", 
@@ -214,10 +201,7 @@ if processed_input:
             )
             if success:
                 reply_text = "I've successfully booked your meeting. You can check your calendar."
-                # Append link 
                 final_display_text = reply_text + f"\n\n[View Event]({link})"
-                
-                # Reset state after booking
                 st.session_state.slots = {"name": None, "date": None, "time": None, "title": "Meeting", "confirmed": False}
             else:
                 reply_text = f"I tried to book it, but Google Calendar gave me an error: {link}"
@@ -225,19 +209,12 @@ if processed_input:
         else:
             final_display_text = reply_text
 
-    # 4. Generate Voice Reply
     audio_reply = text_to_speech_bytes(reply_text)
 
-    # 5. Append Assistant Message
     st.session_state.messages.append({
         "role": "assistant", 
         "content": final_display_text, 
         "audio": audio_reply
     })
 
-    # 6.  update UI
     st.rerun()
-
-# Debugging: Show State
-with st.expander("Debug: Internal State"):
-    st.json(st.session_state.slots)
