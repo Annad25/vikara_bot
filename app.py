@@ -100,17 +100,17 @@ for msg in st.session_state.messages:
 
 # Audio Input
 # We use a key to force a refresh on new recording
-audio_ctx = webrtc_streamer(
-    key="speech-input",
-    mode=WebRtcMode.SENDONLY,
-    rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-    media_stream_constraints={"video": False, "audio": True},
-)
+#audio_ctx = webrtc_streamer(
+    #key="speech-input",
+    #mode=WebRtcMode.SENDONLY,
+    #rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+    #media_stream_constraints={"video": False, "audio": True},
+#)
 
 # Processing Logic
-if audio_ctx.state.playing and audio_ctx.audio_receiver:
+#if audio_ctx.state.playing and audio_ctx.audio_receiver:
     # Logic to grab audio frames
-    st.info("Real-time streaming is active. (Note: For this MVP, consider using the standard st.audio_input if webrtc is unstable on cloud)")
+    #st.info("Real-time streaming is active.")
 
 # --- ALTERNATIVE: SIMPLE AUDIO INPUT (Reliable Fallback) ---
 audio_value = st.audio_input("Record your voice")
