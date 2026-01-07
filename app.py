@@ -41,8 +41,6 @@ def create_calendar_event(summary, start_time_str, duration_mins=30):
             'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Kolkata'},
         }
 
-        if guest_email:
-        event['attendees'] = [{'email': guest_email}]
 
         # CALENDAR_ID
         event_result = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
