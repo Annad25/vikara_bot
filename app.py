@@ -24,15 +24,31 @@ def create_calendar_event(summary, start_time_str, duration_mins=30):
              creds_dict = json.loads(st.secrets["GOOGLE_JSON"])
              creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         else:
-             # Fallback for local testing if file exists
              creds = service_account.Credentials.from_service_account_file('google_key.json', scopes=SCOPES)
 
         service = build('calendar', 'v3', credentials=creds)
 
-        # Parse the ISO format returned by LLM (YYYY-MM-DD HH:MM)
+        # 1. Parse Time
         start_dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M")
         end_dt = start_dt.replace(minute=start_dt.minute + duration_mins)
 
+        # 2. CHECK FOR CONFLICTS (The New Logic)
+        # We query for events that start exactly at the same time or overlap
+        events_result = service.events().list(
+            calendarId=CALENDAR_ID,
+            timeMin=start_dt.isoformat() + 'Z', # Adding Z to indicate UTC/ISO format strictness
+            timeMax=end_dt.isoformat() + 'Z',
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        
+        existing_events = events_result.get('items', [])
+        
+        # If we found an event in this slot, STOP and return error
+        if existing_events:
+            return False, "That time slot is already booked. Please choose a different time."
+
+        # 3. If slot is free, proceed to book
         description = (
             f"Booked by AI Agent.\n"
             f"Meeting: {summary}\n"
@@ -48,6 +64,7 @@ def create_calendar_event(summary, start_time_str, duration_mins=30):
 
         event_result = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
         return True, event_result.get('htmlLink')
+
     except Exception as e:
         return False, str(e)
 
