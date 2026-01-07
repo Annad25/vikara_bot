@@ -204,7 +204,7 @@ if processed_input:
                 final_display_text = reply_text + f"\n\n[View Event]({link})"
                 st.session_state.slots = {"name": None, "date": None, "time": None, "title": "Meeting", "confirmed": False}
             else:
-                reply_text = f"I tried to book it, but Google Calendar gave me an error: {link}"
+                reply_text = f"uh-oh that slot is already taken {link}"
                 final_display_text = reply_text
         else:
             final_display_text = reply_text
