@@ -4,35 +4,41 @@ from datetime import datetime
 from groq import Groq
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from gtts import gTTS
+import io
 
 # --- CONFIGURATION ---
+# Ensure your secrets are set in .streamlit/secrets.toml
 if "GROQ_API_KEY" in st.secrets:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 else:
-    GROQ_API_KEY = " " 
+    st.error("GROQ_API_KEY is missing in secrets.")
+    st.stop()
 
-# --- GOOGLE CALENDAR SETUP ---
+CALENDAR_ID = 'parnadebnath60669@gmail.com' # Your Email
 SCOPES = ['https://www.googleapis.com/auth/calendar']
-CALENDAR_ID = 'parnadebnath60669@gmail.com'
 
+# --- GOOGLE CALENDAR FUNCTION ---
 def create_calendar_event(summary, start_time_str, duration_mins=30):
     try:
         if "GOOGLE_JSON" in st.secrets:
              creds_dict = json.loads(st.secrets["GOOGLE_JSON"])
              creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         else:
+             # Fallback for local testing if file exists
              creds = service_account.Credentials.from_service_account_file('google_key.json', scopes=SCOPES)
 
         service = build('calendar', 'v3', credentials=creds)
 
+        # Parse the ISO format returned by LLM (YYYY-MM-DD HH:MM)
         start_dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M")
         end_dt = start_dt.replace(minute=start_dt.minute + duration_mins)
 
         description = (
-        f"Booked by your Voice Agent.\n"
-        f"Guest Name: {summary.replace('Meeting with ', '')}\n"
-        f"Date Booked: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-    )
+            f"Booked by AI Agent.\n"
+            f"Meeting: {summary}\n"
+            f"Booked on: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        )
 
         event = {
             'summary': summary,
@@ -41,15 +47,25 @@ def create_calendar_event(summary, start_time_str, duration_mins=30):
             'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Kolkata'},
         }
 
-
-        # CALENDAR_ID
         event_result = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
         return True, event_result.get('htmlLink')
     except Exception as e:
         return False, str(e)
 
-# --- AI AGENT (GROQ) ---
+# --- AI ENGINE ---
 client = Groq(api_key=GROQ_API_KEY)
+
+def text_to_speech_bytes(text):
+    """Generates audio bytes from text using free gTTS"""
+    try:
+        tts = gTTS(text=text, lang='en')
+        audio_fp = io.BytesIO()
+        tts.write_to_fp(audio_fp)
+        audio_fp.seek(0)
+        return audio_fp
+    except Exception as e:
+        st.error(f"TTS Error: {e}")
+        return None
 
 def transcribe_audio(audio_bytes):
     try:
@@ -64,92 +80,145 @@ def transcribe_audio(audio_bytes):
         st.error(f"Transcription Error: {e}")
         return None
 
-def extract_slots(text, current_state):
+def process_conversation(user_input, current_state):
+    """
+    This is the Brain. It takes history + new input and returns:
+    1. Updated State
+    2. A Natural Language Response
+    """
+    
+    current_date = datetime.now().strftime('%Y-%m-%d %A')
+    
     sys_prompt = f"""
-    You are a scheduling assistant. 
-    Current state: {current_state}
+    You are a helpful Voice Scheduling Assistant.
+    Today is {current_date}.
+    
+    YOUR GOAL: Gather specific details to book a calendar meeting.
+    REQUIRED FIELDS: 'name' (user's name), 'date' (YYYY-MM-DD), 'time' (HH:MM 24hr format), 'title' (default "Meeting").
+    
+    CURRENT STATE (What we know so far):
+    {json.dumps(current_state)}
     
     INSTRUCTIONS:
-    1. Extract fields: name, date (YYYY-MM-DD), time (HH:MM), title.
-    2. If the user confirms, set "confirmed" to true.
-    3. Today is {datetime.now().strftime('%Y-%m-%d')}.
+    1. Analyze the USER INPUT.
+    2. MERGE new info with CURRENT STATE. 
+       - If the user provides new info, update the field.
+       - If the user does NOT mention a field, KEEP the value from CURRENT STATE. Do NOT set it to null.
+    3. 'confirmed': Set to true ONLY if the user explicitly says "yes", "confirm", or "book it" AND all fields are present.
+    4. 'reply_text': Generate a natural, conversational response to the user.
+       - If fields are missing, ask for them politely (one or two at a time).
+       - If all fields are present but not confirmed, repeat the details and ask to confirm.
+       - If confirmed, say "Booking the meeting now."
     
     OUTPUT FORMAT:
-    Return ONLY a raw JSON object. Do not add markdown formatting.
+    Return ONLY a raw JSON object. No markdown.
+    Structure: {{ "name": "...", "date": "...", "time": "...", "title": "...", "confirmed": boolean, "reply_text": "..." }}
     """
     
     try:
         completion = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": f"User said: '{text}'. Update the state JSON."}
+                {"role": "user", "content": f"USER INPUT: '{user_input}'"}
             ],
             model="llama-3.3-70b-versatile",
-            temperature=0
+            temperature=0,
+            response_format={"type": "json_object"} # Force JSON mode
         )
         content = completion.choices[0].message.content
-        content = content.replace("```json", "").replace("```", "").strip()
         return json.loads(content)
     except Exception as e:
-        st.error(f"Extraction Error: {e}")
-        return {}
+        st.error(f"LLM Error: {e}")
+        # Return old state with error message if fail
+        current_state['reply_text'] = "Sorry, I had a brain freeze. Could you say that again?"
+        return current_state
 
 # --- STREAMLIT UI ---
-st.title("🎙️ Voice Scheduling Agent")
+st.set_page_config(page_title="AI Voice Scheduler", layout="centered")
+st.title("🎙️ Smart Voice Scheduler")
 
+# Initialize Session State
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hi! I'm your scheduling assistant. What is your name?"}]
+    st.session_state.messages = [{"role": "assistant", "content": "Hi! I'm your scheduling assistant. Who am I speaking with?"}]
 if "slots" not in st.session_state:
     st.session_state.slots = {"name": None, "date": None, "time": None, "title": "Meeting", "confirmed": False}
-if "last_processed" not in st.session_state:
-    st.session_state.last_processed = None
+if "last_audio_id" not in st.session_state:
+    st.session_state.last_audio_id = None
 
 # Display Chat History
 for msg in st.session_state.messages:
-    st.chat_message(msg["role"]).write(msg["content"])
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
+        # If there is audio associated with a message, play it
+        if "audio" in msg:
+            st.audio(msg["audio"], format="audio/mp3", autoplay=False)
 
-# --- AUDIO INPUT ---
-audio_value = st.audio_input("Record your voice")
-if audio_value and audio_value != st.session_state.last_processed:
+# --- INPUT HANDLING ---
+# We use a container to handle inputs cleanly
+input_container = st.container()
+processed_input = None
+
+with input_container:
+    # 1. Voice Input
+    audio_val = st.audio_input("Speak to Agent")
+    # 2. Text Input
+    text_val = st.chat_input("Or type here...")
+
+    # Determine which input to use
+    if audio_val and audio_val != st.session_state.last_audio_id:
+        st.session_state.last_audio_id = audio_val
+        with st.spinner("Listening..."):
+            processed_input = transcribe_audio(audio_val)
+    elif text_val:
+        processed_input = text_val
+
+# --- LOGIC FLOW ---
+if processed_input:
+    # 1. Append User Message
+    st.session_state.messages.append({"role": "user", "content": processed_input})
     
-    # Mark this audio as processed 
-    st.session_state.last_processed = audio_value
-    
-    # 1. Transcribe
-    text = transcribe_audio(audio_value)
-    
-    if text:
-        st.session_state.messages.append({"role": "user", "content": text})
+    # 2. Process with LLM (The Brain)
+    with st.spinner("Thinking..."):
+        # We pass the OLD slots so the LLM can remember history
+        new_state = process_conversation(processed_input, st.session_state.slots)
         
-        # 2. Update Slots
-        new_slots = extract_slots(text, st.session_state.slots)
-        st.session_state.slots.update(new_slots)
+        # Update our session state with the new merged state
+        st.session_state.slots.update(new_state)
         
-        # 3. Determine Response
-        response = ""
-        slots = st.session_state.slots
+        reply_text = new_state.get("reply_text", "I'm not sure what to say.")
         
-        if slots["confirmed"]:
+        # 3. Check for Confirmation to Book
+        if new_state.get("confirmed"):
             success, link = create_calendar_event(
-                f"{slots['title']} with {slots['name']}", 
-                f"{slots['date']} {slots['time']}"
+                f"{new_state['title']} with {new_state['name']}", 
+                f"{new_state['date']} {new_state['time']}"
             )
             if success:
-                response = f"Great! I've scheduled the meeting. View it here: {link}"
-                # Resetting state fully for next user
+                reply_text = "I've successfully booked your meeting. You can check your calendar."
+                # Append link for user convenience (not spoken)
+                final_display_text = reply_text + f"\n\n[View Event]({link})"
+                
+                # Reset state after booking
                 st.session_state.slots = {"name": None, "date": None, "time": None, "title": "Meeting", "confirmed": False}
             else:
-                response = f"I tried to schedule it, but there was an error: {link}"
-        
-        elif not slots["name"]:
-            response = "Got it. And what date would you like to meet?"
-        elif not slots["date"]:
-            response = f"Hi {slots['name']}, what date should I schedule?"
-        elif not slots["time"]:
-            response = "What time works best for you?"
+                reply_text = f"I tried to book it, but Google Calendar gave me an error: {link}"
+                final_display_text = reply_text
         else:
-            response = f"I have {slots['title']} with {slots['name']} on {slots['date']} at {slots['time']}. Shall I schedule this?"
+            final_display_text = reply_text
 
-        st.session_state.messages.append({"role": "assistant", "content": response})
-        st.rerun()
+    # 4. Generate Voice Reply
+    audio_reply = text_to_speech_bytes(reply_text)
 
+    # 5. Append Assistant Message
+    st.session_state.messages.append({
+        "role": "assistant", 
+        "content": final_display_text, 
+        "audio": audio_reply
+    })
+
+    # 6. Rerun to update UI
+    st.rerun()
+
+# Debugging: Show State (Optional, remove in production)
+with st.expander("Debug: Internal State"):
+    st.json(st.session_state.slots)
