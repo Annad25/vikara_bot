@@ -28,11 +28,21 @@ def create_calendar_event(summary, start_time_str, duration_mins=30):
         start_dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M")
         end_dt = start_dt.replace(minute=start_dt.minute + duration_mins)
 
+        description = (
+        f"Booked by your Voice Agent.\n"
+        f"Guest Name: {summary.replace('Meeting with ', '')}\n"
+        f"Date Booked: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    )
+
         event = {
             'summary': summary,
+            'description': description,
             'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'Asia/Kolkata'},
             'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Kolkata'},
         }
+
+        if guest_email:
+        event['attendees'] = [{'email': guest_email}]
 
         # CALENDAR_ID
         event_result = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
@@ -145,5 +155,3 @@ if audio_value and audio_value != st.session_state.last_processed:
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
 
-# Debug View
-st.sidebar.write("Internal State:", st.session_state.slots)
