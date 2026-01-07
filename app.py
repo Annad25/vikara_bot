@@ -8,7 +8,6 @@ from gtts import gTTS
 import io
 
 # --- CONFIGURATION ---
-# Ensure your secrets are set in .streamlit/secrets.toml
 if "GROQ_API_KEY" in st.secrets:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 else:
@@ -123,13 +122,13 @@ def process_conversation(user_input, current_state):
             ],
             model="llama-3.3-70b-versatile",
             temperature=0,
-            response_format={"type": "json_object"} # Force JSON mode
+            response_format={"type": "json_object"} 
         )
         content = completion.choices[0].message.content
         return json.loads(content)
     except Exception as e:
         st.error(f"LLM Error: {e}")
-        # Return old state with error message if fail
+        # Return old state with error message
         current_state['reply_text'] = "Sorry, I had a brain freeze. Could you say that again?"
         return current_state
 
@@ -142,6 +141,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Hi! I'm your scheduling assistant. Who am I speaking with?"}]
 if "slots" not in st.session_state:
     st.session_state.slots = {"name": None, "date": None, "time": None, "title": "Meeting", "confirmed": False}
+if "audio_key" not in st.session_state:
+    st.session_state.audio_key = 0
 if "last_audio_id" not in st.session_state:
     st.session_state.last_audio_id = None
 
@@ -149,26 +150,27 @@ if "last_audio_id" not in st.session_state:
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
-        # If there is audio associated with a message, play it
+       
         if "audio" in msg:
             st.audio(msg["audio"], format="audio/mp3", autoplay=False)
 
 # --- INPUT HANDLING ---
-# We use a container to handle inputs cleanly
 input_container = st.container()
 processed_input = None
 
 with input_container:
-    # 1. Voice Input
-    audio_val = st.audio_input("Speak to Agent")
+    # 1. Voice Input with DYNAMIC KEY
+    
+    audio_val = st.audio_input("Speak to Agent", key=f"audio_{st.session_state.audio_key}")
+    
     # 2. Text Input
     text_val = st.chat_input("Or type here...")
 
-    # Determine which input to use
-    if audio_val and audio_val != st.session_state.last_audio_id:
-        st.session_state.last_audio_id = audio_val
+    if audio_val:
         with st.spinner("Listening..."):
             processed_input = transcribe_audio(audio_val)
+            st.session_state.audio_key += 1 
+            
     elif text_val:
         processed_input = text_val
 
@@ -182,7 +184,7 @@ if processed_input:
         # We pass the OLD slots so the LLM can remember history
         new_state = process_conversation(processed_input, st.session_state.slots)
         
-        # Update our session state with the new merged state
+        # Update session state with the new merged state
         st.session_state.slots.update(new_state)
         
         reply_text = new_state.get("reply_text", "I'm not sure what to say.")
@@ -195,7 +197,7 @@ if processed_input:
             )
             if success:
                 reply_text = "I've successfully booked your meeting. You can check your calendar."
-                # Append link for user convenience (not spoken)
+                # Append link 
                 final_display_text = reply_text + f"\n\n[View Event]({link})"
                 
                 # Reset state after booking
@@ -216,9 +218,9 @@ if processed_input:
         "audio": audio_reply
     })
 
-    # 6. Rerun to update UI
+    # 6.  update UI
     st.rerun()
 
-# Debugging: Show State (Optional, remove in production)
+# Debugging: Show State
 with st.expander("Debug: Internal State"):
     st.json(st.session_state.slots)
