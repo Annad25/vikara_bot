@@ -1,4 +1,4 @@
-# Voice Scheduling Agent 🎙️
+# Meeting Scheduling Agent(voice+text) 🎙️
 
 This project is a real time voice assistant that converses with users to gather meeting details and automatically books them into a Google Calendar.
 
